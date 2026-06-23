@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Chat System (WebSocket Auth)</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background: #f0f2f5; color: #333; }
+        .container { max-width: 700px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        .auth-box { display: flex; gap: 20px; margin-bottom: 20px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e9ecef; }
+        .auth-section { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+        .auth-section h3 { margin: 0 0 5px 0; color: #495057; border-bottom: 2px solid #dee2e6; padding-bottom: 5px; }
+        #chatArea { display: none; margin-top: 20px; } /* Tersembunyi sebelum login */
+        #chatBox { height: 350px; border: 1px solid #ced4da; overflow-y: auto; padding: 15px; margin-bottom: 15px; background: #fff; border-radius: 6px; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 10px; }
+        input, select, button { padding: 10px; border-radius: 6px; border: 1px solid #ced4da; font-size: 14px; }
+        input:focus, select:focus { outline: none; border-color: #80bdff; box-shadow: 0 0 0 0.2rem rgba(0,123,255,0.25); }
+        .btn-primary { background: #007bff; color: white; border: none; cursor: pointer; font-weight: bold; }
+        .btn-primary:hover { background: #0069d9; }
+        .btn-success { background: #28a745; color: white; border: none; cursor: pointer; font-weight: bold; }
+        .btn-success:hover { background: #218838; }
+        .system-msg { color: #6c757d; font-style: italic; text-align: center; margin: 8px 0; font-size: 13px; }
+        .private-msg { color: #0056b3; background: #e7f1ff; padding: 6px 10px; border-radius: 6px; margin: 5px 0; width: fit-content; max-width: 80%; }
+        .group-msg { color: #d35400; background: #fdf2e9; padding: 6px 10px; border-radius: 6px; margin: 5px 0; width: fit-content; max-width: 80%; }
+        .global-msg { background: #f1f1f1; padding: 6px 10px; border-radius: 6px; margin: 5px 0; width: fit-content; max-width: 80%; }
+        hr { border: 0; height: 1px; background: #dee2e6; margin: 20px 0; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🏢 Enterprise Chat System <span style="font-size: 14px; color: #28a745;">● Live dev</span></h2>
+    <p style="color: #6c757d; font-size: 14px;">Semua jalur registrasi, login, dan chat dikendalikan via satu pipa WebSocket.</p>
+    
+    <div class="auth-box" id="authBox">
+        <div class="auth-section">
+            <h3>📝 Registrasi Baru</h3>
+            <input type="text" id="regUser" placeholder="Username (cth: hilman)">
+            <input type="text" id="regName" placeholder="Nama Lengkap (cth: Muh. Hilman)">
+            <input type="text" id="regCabang" placeholder="Cabang (cth: garut)">
+            <input type="text" id="regDivisi" placeholder="Divisi (cth: TI)">
+            <button class="btn-primary" onclick="doRegister()">Daftarkan Akun</button>
+        </div>
+        
+        <div style="border-left: 1px solid #dee2e6; margin: 0 10px;"></div>
+
+        <div class="auth-section" style="justify-content: flex-start;">
+            <h3>🔑 Masuk Aplikasi</h3>
+            <input type="text" id="loginUser" placeholder="Masukkan Username Anda">
+            <button class="btn-success" onclick="connectAndLogin()" id="btnLogin">Sign In</button>
+            <div id="statusKoneksi" class="system-msg" style="text-align: left; margin-top: 5px;">Status: Disconnected</div>
+        </div>
+    </div>
+
+    <div id="chatArea">
+        <div id="chatBox">
+            <div class="system-msg">Selamat datang di ruang obrolan utama.</div>
+        </div>
+
+        <div class="input-group">
+            <select id="msgType" onchange="toggleRecipientPlaceholder()">
+                <option value="PUBLIC">GLOBAL (Semua User)</option>
+                <option value="PRIVATE">PRIVATE (1-on-1 Chat)</option>
+                <option value="DIVISI">BROADCAST DIVISI</option>
+                <option value="CABANG">BROADCAST CABANG</option>
+            </select>
+            <input type="text" id="recipientInput" placeholder="Tujuan otomatis..." disabled>
+        </div>
+        
+        <div class="input-group">
+            <input type="text" id="messageContent" placeholder="Ketik pesan Anda di sini..." onkeypress="handleKeyPress(event)">
+            <button class="btn-success" onclick="sendMessage()">Kirim Pesan</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let ws;
+    let myUsername = "";
+    window.onload = function() {
+        initWebSocket();
+    };
+
+    function initWebSocket() {
+        ws = new WebSocket("ws://localhost:8080/chat");
+
+        ws.onopen = () => {
+            document.getElementById("statusKoneksi").innerHTML = "🟢 Terhubung ke Server (Silakan Login/Register)";
+        };
+
+        ws.onmessage = (event) => {
+            const rawData = event.data;
+
+            if (rawData.startsWith("[REG_SUCCESS]")) {
+                alert("Registrasi Berhasil! Silakan ketik username Anda di kolom Login.");
+                return;
+            }
+            if (rawData.startsWith("[REG_FAILED]")) {
+                alert("Registrasi Gagal: " + rawData.replace("[REG_FAILED] ", ""));
+                return;
+            }
+            if (rawData.startsWith("[LOGIN_FAILED]")) {
+                alert("Gagal Masuk: " + rawData.replace("[LOGIN_FAILED] ", ""));
+                return;
+            }
+            if (rawData.startsWith("[LOGIN_SUCCESS]")) {
+                document.getElementById("authBox").style.display = "none";
+                document.getElementById("chatArea").style.display = "block";
+                myUsername = document.getElementById("loginUser").value.trim();
+                return;
+            }
+            writeToChatBox(rawData);
+        };
+
+        ws.onclose = () => {
+            document.getElementById("statusKoneksi").innerHTML = "🔴 Koneksi Terputus. Memuat ulang...";
+            setTimeout(initWebSocket, 3000);
+        };
+    }
+
+    function doRegister() {
+        const user = document.getElementById("regUser").value.trim();
+        const name = document.getElementById("regName").value.trim();
+        const cabang = document.getElementById("regCabang").value.trim();
+        const divisi = document.getElementById("regDivisi").value.trim();
+
+        if (!user || !name || !cabang || !divisi) {
+            alert("Semua kolom registrasi wajib diisi!");
+            return;
+        }
+
+        const payload = {
+            type: "REGISTER",
+            sender: user, 
+            displayName: name,
+            cabang: cabang,
+            divisi: divisi
+        };
+
+        ws.send(JSON.stringify(payload));
+    }
+
+    function connectAndLogin() {
+        const user = document.getElementById("loginUser").value.trim();
+        if (!user) {
+            alert("Masukkan username untuk login!");
+            return;
+        }
+
+        const payload = {
+            type: "LOGIN",
+            sender: user
+        };
+
+        ws.send(JSON.stringify(payload));
+    }
+
+    function toggleRecipientPlaceholder() {
+        const type = document.getElementById("msgType").value;
+        const recipientInput = document.getElementById("recipientInput");
+        
+        if (type === "PUBLIC") {
+            recipientInput.disabled = true;
+            recipientInput.value = "";
+            recipientInput.placeholder = "Tujuan otomatis (Global)";
+        } else {
+            recipientInput.disabled = false;
+            if (type === "PRIVATE") recipientInput.placeholder = "Ketik Username Tujuan (cth: joko)";
+            if (type === "DIVISI") recipientInput.placeholder = "Ketik Nama Divisi (cth: TI)";
+            if (type === "CABANG") recipientInput.placeholder = "Ketik Nama Cabang (cth: garut)";
+        }
+    }
+
+    function sendMessage() {
+        const type = document.getElementById("msgType").value;
+        const recipient = document.getElementById("recipientInput").value.trim();
+        const content = document.getElementById("messageContent").value.trim();
+
+        if (!content) return;
+        if (type !== "PUBLIC" && !recipient) {
+            alert("Kolom tujuan wajib diisi untuk jenis chat ini!");
+            return;
+        }
+
+        const payload = {
+            type: type,
+            sender: myUsername,
+            recipient: recipient,
+            content: content
+        };
+
+        ws.send(JSON.stringify(payload));
+        document.getElementById("messageContent").value = ""; 
+    }
+
+    function writeToChatBox(text) {
+        const chatBox = document.getElementById("chatBox");
+        let className = "global-msg";
+        
+        if (text.includes("[Private]")) {
+            className = "private-msg";
+        } else if (text.includes("[SYSTEM]") || text.includes("bergabung!") || text.includes("keluar.")) {
+            className = "system-msg";
+        } else if (text.startsWith("[")) {
+            className = "group-msg"; 
+        }
+
+        chatBox.innerHTML += `<div class="${className}">${text}</div>`;
+        chatBox.scrollTop = chatBox.scrollHeight; // Auto-scroll down
+    }
+
+    function handleKeyPress(event) {
+        if (event.key === 'Enter') {
+            sendMessage();
+        }
+    }
+</script>
+</body>
+</html>

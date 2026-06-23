@@ -1,0 +1,276 @@
+'use client';
+
+import { useState, useCallback, useEffect, useRef } from 'react';
+
+export interface ChatMessage {
+  user: string;
+  message: string;
+  type: 'PUBLIC' | 'PRIVATE' | 'DIVISI' | 'CABANG' | 'SYSTEM';
+  to?: string;
+  timestamp: string;
+}
+
+export interface ChatState {
+  isConnected: boolean;
+  isAuthenticated: boolean;
+  currentUser: string;
+  userCabang: string;
+  userDivisi: string;
+  registeredUsers: string[];
+  messages: ChatMessage[];
+  error: string | null;
+  isLoading: boolean;
+}
+
+interface UseChat {
+  state: ChatState;
+  register: (username: string, password: string, cabang: string, divisi: string) => void;
+  login: (username: string, password: string) => void;
+  sendMessage: (message: string, type: 'PUBLIC' | 'PRIVATE' | 'DIVISI' | 'CABANG', to?: string) => void;
+  logout: () => void;
+}
+
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080/ws-chat';
+
+export function useChat(): UseChat {
+  const [state, setState] = useState<ChatState>({
+    isConnected: false,
+    isAuthenticated: false,
+    currentUser: '',
+    userCabang: '',
+    userDivisi: '',
+    registeredUsers: [],
+    messages: [],
+    error: null,
+    isLoading: false,
+  });
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const connectWebSocket = useCallback(() => {
+    try {
+      wsRef.current = new WebSocket(WS_URL);
+
+      wsRef.current.onopen = () => {
+        setState(prev => ({
+          ...prev,
+          isConnected: true,
+          error: null,
+        }));
+      };
+
+      wsRef.current.onmessage = (event: MessageEvent) => {
+        const data = event.data;
+        console.log('Received message:', data);
+        if (data === '[REG_SUCCESS]') {
+          setState(prev => ({
+            ...prev,
+            messages: [...prev.messages, {
+              user: 'SYSTEM',
+              message: 'Registrasi berhasil! Silakan login.',
+              type: 'SYSTEM',
+              timestamp: new Date().toLocaleTimeString('id-ID'),
+            }],
+          }));
+          return;
+        }
+        if (data === '[REG_FAILED]') {
+          setState(prev => ({
+            ...prev,
+            error: 'Registrasi gagal. Username mungkin sudah digunakan.',
+            messages: [...prev.messages, {
+              user: 'SYSTEM',
+              message: 'Registrasi gagal. Username mungkin sudah digunakan.',
+              type: 'SYSTEM',
+              timestamp: new Date().toLocaleTimeString('id-ID'),
+            }],
+          }));
+          return;
+        }
+
+        if (data.startsWith('[LOGIN_SUCCESS]')) {
+          const parts = data.split('|');
+          const token = parts[1] || '';
+          const cabang = parts[2] || '';
+          const divisi = parts[3] || '';
+          if (token) {
+            localStorage.setItem('chat_token', token);
+          }
+
+          setState(prev => {
+            const activeUser = prev.currentUser || 'User'; 
+            return {
+              ...prev,
+              isAuthenticated: true, 
+              token: token,
+              userCabang: cabang,
+              userDivisi: divisi,
+              error: null,
+              isLoading: false,
+              messages: [...prev.messages, {
+                user: 'SYSTEM',
+                message: `Login berhasil! Selamat datang, ${activeUser}`,
+                type: 'SYSTEM',
+                timestamp: new Date().toLocaleTimeString('id-ID'),
+              }],
+            };
+          });
+          wsRef.current?.send(`[GET_USERS]\n${cabang}`);
+          return;
+        }
+
+        if (data === '[LOGIN_FAILED]') {
+          setState(prev => ({
+            ...prev,
+            error: 'Login gagal. Username atau password salah.',
+            messages: [...prev.messages, {
+              user: 'SYSTEM',
+              message: 'Login gagal. Username atau password salah.',
+              type: 'SYSTEM',
+              timestamp: new Date().toLocaleTimeString('id-ID'),
+            }],
+          }));
+          return;
+        }
+        if (data.startsWith('[USER_LIST]')) {
+          console.log('FE Menerima data User List dari BE:', data);
+          const parts = data.split('|');
+          const rawUserList = parts[1] || ''; 
+          const usersArray = rawUserList
+            .split(',')
+            .map((name: string ) => name.trim())
+            .filter((name: string ) => name !== '');
+
+          console.log('Hasil pemetaan Array Registered Users:', usersArray);
+
+          setState(prev => ({
+            ...prev,
+            registeredUsers: usersArray 
+          }));
+          return;
+        }
+        try {
+          const lines = data.split('\n');
+          if (lines.length >= 3) {
+            const type = lines[0].trim();
+            const user = lines[1].trim();
+            const message = lines.slice(2).join('\n').trim();
+
+            if (type && user && message) {
+              setState(prev => ({
+                ...prev,
+                messages: [...prev.messages, {
+                  user,
+                  message,
+                  type: (type as any) || 'PUBLIC',
+                  timestamp: new Date().toLocaleTimeString('id-ID'),
+                }],
+              }));
+            }
+          }
+        } catch (e) {
+          console.log('Could not parse message:', data);
+        }
+      };
+
+      wsRef.current.onerror = (error: Event) => {
+        console.error('WebSocket error:', error);
+        setState(prev => ({
+          ...prev,
+          error: 'Koneksi error. Mencoba reconnect...',
+          isConnected: false,
+        }));
+      };
+      
+
+      wsRef.current.onclose = () => {
+        setState(prev => ({
+          ...prev,
+          isConnected: false,
+        }));
+        reconnectTimeoutRef.current = setTimeout(() => {
+          connectWebSocket();
+        }, 3000);
+      };
+    } catch (error) {
+      console.error('Failed to connect WebSocket:', error);
+      setState(prev => ({
+        ...prev,
+        error: 'Gagal terhubung ke server.',
+      }));
+    }
+  }, []);
+
+  useEffect(() => {
+    connectWebSocket();
+
+    return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [connectWebSocket]);
+
+  const register = useCallback((username: string, password: string, cabang: string, divisi: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      setState(prev => ({ ...prev, isLoading: true }));
+      const message = `[REGISTER]\n${username}\n${password}\n${cabang}\n${divisi}`;
+      wsRef.current.send(message);
+    }
+  }, []);
+
+  const login = useCallback((username: string, password: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      setState(prev => ({ ...prev, isLoading: true, currentUser: username }));
+      const message = `[LOGIN]\n${username}\n${password}`;
+      wsRef.current.send(message);
+    }
+  }, []);
+
+  const sendMessage = useCallback((message: string, type: 'PUBLIC' | 'PRIVATE' | 'DIVISI' | 'CABANG', to?: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN && state.isAuthenticated) {
+      let msg = `[${type}]\n${state.currentUser}\n${message}`;
+      if (to) {
+        msg += `\n${to}`;
+      }
+      wsRef.current.send(msg);
+
+      setState(prev => ({
+        ...prev,
+        messages: [...prev.messages, {
+          user: state.currentUser,
+          message,
+          type,
+          to,
+          timestamp: new Date().toLocaleTimeString('id-ID'),
+        }],
+      }));
+    }
+  }, [state.isAuthenticated, state.currentUser]);
+
+  const logout = useCallback(() => {
+    setState({
+      isConnected: false,
+      isAuthenticated: false,
+      currentUser: '',
+      userCabang: '',
+      userDivisi: '',
+      registeredUsers: [],
+      messages: [],
+      error: null,
+      isLoading: false,
+    });
+  }, []);
+
+  return {
+    state,
+    register,
+    login,
+    sendMessage,
+    logout,
+  };
+}
