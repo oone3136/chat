@@ -35,4 +35,5 @@ public class UsersController {
         Users savedUser = usersService.saveUser(req);
         return Response.status(Response.Status.CREATED).entity(savedUser).build();
     }
+
 }

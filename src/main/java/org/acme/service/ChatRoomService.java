@@ -18,7 +18,7 @@ public class ChatRoomService {
             ChatRoomEntity newRoom = new ChatRoomEntity();
             newRoom.setRoomCode(roomCode);
             newRoom.setRoomName(roomName);
-            newRoom.persist(); // Khas Panache: void persist
+            newRoom.persist();
             return newRoom;
         }
 
