@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 
 interface AuthBoxProps {
   onRegister: (username: string, password: string, cabang: string, divisi: string) => void;
-  onLogin: (username: string, password: string) => void;
+  onLogin: (action: string, username: string, password: string) => void;
   isLoading: boolean;
   error: string | null;
 }
@@ -20,7 +20,7 @@ export function AuthBox({ onRegister, onLogin, isLoading, error }: AuthBoxProps)
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (username && password) {
-      onLogin(username, password);
+      onLogin("LOGIN",username, password);
     }
   };
 

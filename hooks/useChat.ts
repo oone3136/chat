@@ -21,12 +21,35 @@ export interface ChatState {
   error: string | null;
   isLoading: boolean;
 }
+export interface userRequest {
+  action: string;
+  userName: string;
+  password: string;
+  sender: string;
+  displayName: string;
+  cabang: string;
+  divisi: string;
+  limit: number;
+  roomCode: string;
+  chatRequests: listChat[];
+  chatRequest: listChat;
+}
+export interface listChat {
+  content: string;
+  roomCode: 'PUBLIC' | 'PRIVATE' | 'DIVISI' | 'CABANG' | 'SYSTEM';
+  sendTo?: string;
+  cabang: string;
+  divisi: string;
+  status?: string;
+}
 
 interface UseChat {
   state: ChatState;
   register: (username: string, password: string, cabang: string, divisi: string) => void;
-  login: (username: string, password: string) => void;
+  login: (action: string, username: string, password: string) => void;
   sendMessage: (message: string, type: 'PUBLIC' | 'PRIVATE' | 'DIVISI' | 'CABANG', to?: string) => void;
+  getMessage: (action: string, roomCode: string, limit: number) => void;
+  getRegisteredUsers: (users: string, limit: number) => void;
   logout: () => void;
 }
 
@@ -116,7 +139,7 @@ export function useChat(): UseChat {
               }],
             };
           });
-          wsRef.current?.send(`[GET_USERS]\n${cabang}`);
+          getMessage('GET_MESSAGE_GLOBAL', 'PUBLIC', 50);
           return;
         }
 
@@ -223,21 +246,42 @@ export function useChat(): UseChat {
     }
   }, []);
 
-  const login = useCallback((username: string, password: string) => {
+  const login = useCallback((action: string, username: string, password: string) => {
+    console.log(`Attempting to ${action} with username: ${username}`);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       setState(prev => ({ ...prev, isLoading: true, currentUser: username }));
-      const message = `[LOGIN]\n${username}\n${password}`;
+      const message = `{"action": "${action}", "userName": "${username}", "password": "${password}"}`;
       wsRef.current.send(message);
+    }
+  }, []);
+
+  const getMessage = useCallback((action: string, roomCode: string, limit: number) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      const message = `{"action": "${action}", "roomCode": "${roomCode}", "limit": ${limit}}`;
+      wsRef.current.send(message);
+      return message;
     }
   }, []);
 
   const sendMessage = useCallback((message: string, type: 'PUBLIC' | 'PRIVATE' | 'DIVISI' | 'CABANG', to?: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN && state.isAuthenticated) {
-      let msg = `[${type}]\n${state.currentUser}\n${message}`;
-      if (to) {
-        msg += `\n${to}`;
-      }
-      wsRef.current.send(msg);
+        const payloadChat: listChat = {
+        content: message,
+        roomCode: type, 
+        sendTo: to || '',
+        cabang: state.userCabang,
+        divisi: state.userDivisi,
+        status: 'SENT'
+      };
+
+      const requestBody: Partial<userRequest> = {
+        action: "SEND_MESSAGE",
+        userName: state.currentUser,
+        roomCode: type,
+        chatRequest: payloadChat
+      };
+      const jsonString = JSON.stringify(requestBody);
+      wsRef.current.send(jsonString);
 
       setState(prev => ({
         ...prev,
@@ -247,10 +291,24 @@ export function useChat(): UseChat {
           type,
           to,
           timestamp: new Date().toLocaleTimeString('id-ID'),
+          status: 'SENT'
         }],
       }));
     }
   }, [state.isAuthenticated, state.currentUser]);
+  
+  const getRegisteredUsers = useCallback((users: string, limit: number) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      const requestBody: Partial<userRequest> = {
+        action: "GET_REGISTERED_USERS",
+        sender: state.currentUser,
+        userName: users,
+        limit: limit
+      };
+      const jsonString = JSON.stringify(requestBody);
+      wsRef.current.send(jsonString);
+    }
+  }, [state.currentUser]);
 
   const logout = useCallback(() => {
     setState({
@@ -270,7 +328,9 @@ export function useChat(): UseChat {
     state,
     register,
     login,
+    getMessage,
     sendMessage,
+    getRegisteredUsers,
     logout,
   };
 }

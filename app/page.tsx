@@ -7,7 +7,7 @@ import { ChatArea } from '@/components/chat/ChatArea';
 import { ConnectionStatus } from '@/components/common/ConnectionStatus';
 
 export default function Page() {
-  const { state, register, login, sendMessage, logout } = useChat();
+  const { state, register, login, sendMessage, getRegisteredUsers, logout } = useChat();
 
   const [activeTab, setActiveTab] = useState<'GLOBAL' | 'GRUP' | 'PRIVATE'>('GLOBAL');
   const [activeChat, setActiveChat] = useState<{ type: 'PUBLIC' | 'PRIVATE' | 'DIVISI' | 'CABANG'; target: string }>({
@@ -60,6 +60,21 @@ export default function Page() {
   const generatePrivateRoomCode = (userA: string, userB: string) => {
     return userA.localeCompare(userB) < 0 ? `${userA}_${userB}` : `${userB}_${userA}`;
   };
+  useEffect(() => {
+    const pendingTarget = sessionStorage.getItem('pendingChatTarget');
+    
+    if (pendingTarget && state.registeredUsers.length > 0) {
+      const userExists = state.registeredUsers.map(u => u.toLowerCase()).includes(pendingTarget.toLowerCase());
+
+      if (userExists) {
+        const roomCode = generatePrivateRoomCode(state.currentUser, pendingTarget);
+        handleSelectChat('PRIVATE', pendingTarget);
+      } else {
+        alert(`Username "${pendingTarget}" tidak terdaftar!`);
+      }
+      sessionStorage.removeItem('pendingChatTarget');
+    }
+  }, [state.registeredUsers, state.currentUser, handleSelectChat]);
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
@@ -158,17 +173,10 @@ export default function Page() {
                       <button
                         onClick={() => {
                           const inputNama = prompt("Masukkan username rekan kerja:");
-                          console.log("Daftar terkini registeredUsers di State:", state.registeredUsers);
-                          
                           if (inputNama) {
-                            const nama = inputNama.trim(); 
-
-                            if (state.registeredUsers.map(u => u.toLowerCase()).includes(nama.toLowerCase())) {
-                              const roomCode = generatePrivateRoomCode(state.currentUser, nama);
-                              handleSelectChat('PRIVATE', nama);
-                            } else {
-                              alert(`Username "${nama}" tidak terdaftar di cabang ${state.userCabang}!\n\nUser Terdaftar: ${state.registeredUsers.join(', ') || 'Kosong'}`);
-                            }
+                            const nama = inputNama.trim();
+                            getRegisteredUsers(nama, 10); 
+                            sessionStorage.setItem('pendingChatTarget', nama);
                           }
                         }}
                         className="text-xs bg-primary hover:bg-primary/95 text-primary-foreground px-2 py-1 rounded-md font-medium"
@@ -232,10 +240,17 @@ export default function Page() {
                   messages={filteredMessages}
                   currentUser={state.currentUser}
                   onSendMessage={(msg) => {
-                    // 🟢 Jika private chat, parameter 'to' diisi Room Code agar dibaca akurat oleh ChatSocket Quarkus
-                    const destination = activeChat.type === 'PRIVATE' 
-                      ? generatePrivateRoomCode(state.currentUser, activeChat.target)
-                      : activeChat.target;
+                    let destination = activeChat.target;
+    
+                      if (activeChat.type === 'PRIVATE') {
+                        destination = generatePrivateRoomCode(state.currentUser, activeChat.target);
+                      } else if (activeChat.type === 'DIVISI') {
+                        destination = `DIVISI_${activeChat.target}`;
+                      } else if (activeChat.type === 'CABANG') {
+                        destination = `CABANG_${activeChat.target}`;
+                      } else if (activeChat.type === 'PUBLIC') {
+                        destination = 'GLOBAL_ROOM';
+                      }
                     sendMessage(msg, activeChat.type, destination);
                   }}
                   isAuthenticated={state.isAuthenticated}
