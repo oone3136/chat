@@ -9,11 +9,14 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.acme.config.ChatBusinessException;
+import org.acme.dao.UsersRequest;
 import org.acme.entity.Users;
 import org.acme.service.UsersService;
 import org.eclipse.microprofile.openapi.annotations.parameters.RequestBody;
 
+@Slf4j
 @ApplicationScoped
 @Path("/api/users")
 @Produces(MediaType.APPLICATION_JSON)
@@ -25,15 +28,14 @@ public class UsersController {
     @POST
     @Path("/register")
     @Transactional
-    public Response saveUser(@RequestBody(required = true) Users req) {
+    public Response saveUser(@RequestBody UsersRequest req) {
         Users existingUser = usersService.getUsers(req.getUserName());
 
         if (existingUser != null && existingUser.isPersistent()) {
             throw new ChatBusinessException("Username '" + req.getUserName() + "' telah digunakan");
         }
 
-        Users savedUser = usersService.saveUser(req);
-        return Response.status(Response.Status.CREATED).entity(savedUser).build();
+        return usersService.saveUser(req);
     }
 
 }

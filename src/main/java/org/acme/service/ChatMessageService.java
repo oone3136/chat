@@ -3,12 +3,14 @@ package org.acme.service;
 import io.quarkus.websockets.next.WebSocketConnection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.transaction.Transactional;
+import jakarta.ws.rs.core.Response;
 import lombok.RequiredArgsConstructor;
 import org.acme.dao.ChatRequest;
 import org.acme.dao.UsersRequest;
 import org.acme.entity.ChatMessageEntity;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,6 +44,18 @@ public class ChatMessageService {
         return ChatMessageEntity.find("roomCode = ?1 order by timestamp desc", request.getRoomCode())
                 .page(0, request.getLimit())
                 .list();
+    }
+    public Response getListMessage(String request, int limit) {
+        List<ChatMessageEntity> getList = new ArrayList<>();
+        try {
+            getList = ChatMessageEntity.find("roomCode = ?1 order by timestamp desc", request)
+                    .page(0, limit)
+                    .list();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        return Response.ok(getList).build();
     }
 
 }

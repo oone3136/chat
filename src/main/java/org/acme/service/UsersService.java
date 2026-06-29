@@ -3,6 +3,7 @@ package org.acme.service;
 import io.quarkus.websockets.next.WebSocketConnection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.transaction.Transactional;
+import jakarta.ws.rs.core.Response;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.acme.dao.ChatRequest;
@@ -12,8 +13,10 @@ import org.acme.entity.ChatMessageEntity;
 import org.acme.entity.ChatRoomEntity;
 import org.acme.entity.Users;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.time.LocalDateTime;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -21,9 +24,37 @@ import java.util.stream.Collectors;
 @ApplicationScoped
 public class UsersService {
     @Transactional
-    public Users saveUser(Users users) {
-        users.persist();
-        return users;
+    public Response saveUser(UsersRequest req) {
+        Users existingUser = getUsers(req.getUserName());
+        Map<String, String> response = new HashMap<>();
+
+        try {
+            KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+            keyGen.initialize(2048);
+            KeyPair pair = keyGen.generateKeyPair();
+
+            String publicKeyBase64 = Base64.getEncoder().encodeToString(pair.getPublic().getEncoded());
+            String privateKeyBase64 = Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
+
+            Users newUser = new Users();
+            newUser.setUserName(req.getUserName());
+            newUser.setPassword(req.getPassword());
+            newUser.setDisplayName(req.getDisplayName());
+            newUser.setCabang(req.getCabang());
+            newUser.setDivisi(req.getDivisi());
+            newUser.setPublicKey(publicKeyBase64);
+            newUser.setPrivateKey(privateKeyBase64);
+            newUser.setLastSent(LocalDateTime.now());
+
+            newUser.persist();
+
+            response.put("status", "success");
+            response.put("message", "thankyou "+req.getUserName()+", your register  berhasil");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+            return Response.ok(response).build();
     }
     public Users getUsers(String username) {
         return Users.find("userName", username).firstResult();
