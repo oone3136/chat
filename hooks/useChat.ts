@@ -5,7 +5,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 export interface ChatMessage {
   user: string;
   message: string;
-  type: 'PUBLIC' | 'PRIVATE' | 'DIVISI' | 'CABANG' | 'SYSTEM';
+  type: String;
   to?: string;
   timestamp: string;
 }
@@ -51,6 +51,7 @@ interface UseChat {
   getMessage: (action: string, roomCode: string, limit: number) => void;
   getRegisteredUsers: (users: string, limit: number) => void;
   logout: () => void;
+  setChatHistory: (formattedHistory: any[]) => void;
 }
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080/ws-chat';
@@ -70,6 +71,8 @@ export function useChat(): UseChat {
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  let isJsonHistory = false;
+  let parsedData: any = null;
 
   const connectWebSocket = useCallback(() => {
     try {
@@ -173,6 +176,37 @@ export function useChat(): UseChat {
           }));
           return;
         }
+        if (data.trim().startsWith('[') || data.trim().startsWith('{')) {
+          try {
+            
+            const parsedData = JSON.parse(data);
+            console.log('Berhasil memparsing JSON History dari BE:', parsedData);
+
+            const historyMessages = Array.isArray(parsedData) 
+              ? parsedData 
+              : (parsedData.messages || []);
+
+            if (historyMessages.length > 0) {
+              setState(prev => {
+                const formattedHistory = historyMessages.map((msg: any) => ({
+                  user: msg.user || 'SYSTEM',
+                  message: msg.message || msg.text || '', 
+                  type: msg.type || 'PUBLIC',
+                  to: msg.to || '',
+                  timestamp: msg.timestamp || new Date().toLocaleTimeString('id-ID'),
+                }));
+
+                return {
+                  ...prev,
+                  messages: [...prev.messages, ...formattedHistory]
+                };
+              });
+            }
+            return;
+          } catch (jsonErr) {
+            console.error('Gagal memproses data berformat JSON:', jsonErr);
+          }
+        }
         try {
           const lines = data.split('\n');
           if (lines.length >= 3) {
@@ -259,13 +293,15 @@ export function useChat(): UseChat {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const message = `{"action": "${action}", "roomCode": "${roomCode}", "limit": ${limit}}`;
       wsRef.current.send(message);
+      console.log(`Requesting messages with action: ${action}`);
       return message;
     }
   }, []);
 
   const sendMessage = useCallback((message: string, type: 'PUBLIC' | 'PRIVATE' | 'DIVISI' | 'CABANG', to?: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN && state.isAuthenticated) {
-        const payloadChat: listChat = {
+      console.log(`Sending message: ${message}, type: ${type}, to: ${to}`);
+      const payloadChat: listChat = {
         content: message,
         roomCode: type, 
         sendTo: to || '',
@@ -297,6 +333,7 @@ export function useChat(): UseChat {
     }
   }, [state.isAuthenticated, state.currentUser]);
   
+  
   const getRegisteredUsers = useCallback((users: string, limit: number) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const requestBody: Partial<userRequest> = {
@@ -323,6 +360,12 @@ export function useChat(): UseChat {
       isLoading: false,
     });
   }, []);
+  const setChatHistory = useCallback((formattedHistory: any[]) => {
+    setState(prev => ({
+      ...prev,
+      messages: [...prev.messages, ...formattedHistory]
+    }));
+  }, []);
 
   return {
     state,
@@ -332,5 +375,6 @@ export function useChat(): UseChat {
     sendMessage,
     getRegisteredUsers,
     logout,
+    setChatHistory
   };
 }

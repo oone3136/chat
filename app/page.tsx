@@ -1,13 +1,16 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useChat } from '@/hooks/useChat';
 import { AuthBox } from '@/components/auth/AuthBox';
 import { ChatArea } from '@/components/chat/ChatArea';
 import { ConnectionStatus } from '@/components/common/ConnectionStatus';
+import { getChatHistory } from '@/hooks/getChat';
 
 export default function Page() {
-  const { state, register, login, sendMessage, getRegisteredUsers, logout } = useChat();
+  const { state, register, login, sendMessage, getMessage, getRegisteredUsers, logout, setChatHistory } = useChat();
+  const [limit, setLimit] = useState<number>(50);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   const [activeTab, setActiveTab] = useState<'GLOBAL' | 'GRUP' | 'PRIVATE'>('GLOBAL');
   const [activeChat, setActiveChat] = useState<{ type: 'PUBLIC' | 'PRIVATE' | 'DIVISI' | 'CABANG'; target: string }>({
@@ -20,28 +23,63 @@ export default function Page() {
       console.log('🔥 RE-RENDER DETECTED: Registered Users Berhasil Diperbarui:', state.registeredUsers);
     }
   }, [state.registeredUsers]);
+  useEffect(() => {
+    if (!state.isAuthenticated) return;
+
+    const fetchHistory = async () => {
+      console.log(`⏳ Menarik riwayat pesan HTTP untuk room: ${activeChat.target}`);
+      const roomTarget = activeChat.type === 'PUBLIC' ? 'PUBLIC' : activeChat.target;
+      const history = await getChatHistory(roomTarget, 50);
+      if (history.length > 0) {
+        const sortedHistory = [...history].reverse();
+        setChatHistory(sortedHistory);
+        const container = chatContainerRef.current;
+        const previousScrollHeight = container ? container.scrollHeight : 0;
+
+        setChatHistory(sortedHistory);
+        setTimeout(() => {
+          if (container) {
+            container.scrollTop = container.scrollHeight - previousScrollHeight;
+          }
+        }, 50);
+      }
+    };
+
+    fetchHistory();
+  }, [activeChat.target, activeChat.type, state.isAuthenticated, limit, setChatHistory]);
 
   const getChatHistoryUsers = useCallback(() => {
     const privateMessages = state.messages.filter((m) => m.type === 'PRIVATE');
     const users = new Set<string>();
 
     privateMessages.forEach((m) => {
-      if (m.user === state.currentUser && m.to) {
-        const cleanTarget = m.to.replace(`${state.currentUser}_`, '').replace(`_${state.currentUser}`, '');
-        users.add(cleanTarget !== 'PRIVATE' ? cleanTarget : m.to);
-      }
-      if (m.to && m.to.includes(state.currentUser)) {
-        users.add(m.user);
-      }
+      // if (m.user === state.currentUser && m.to) {
+      //   const cleanTarget = m.to.replace(`${state.currentUser}_`, '').replace(`_${state.currentUser}`, '');
+      //   users.add(cleanTarget !== 'PRIVATE' ? cleanTarget : m.to);
+      // }
+
+      // if (m.to && m.to.includes(state.currentUser)) {
+      //   users.add(m.user);
+      // }
       if (m.user !== state.currentUser) {
         users.add(m.user);
       }
+      if (m.user === state.currentUser && m.to) {
+        const cleanTarget = m.to
+          .replace(state.currentUser, '')
+          .replace('_', '')
+          .trim();
+        
+        if (cleanTarget && cleanTarget !== 'PRIVATE') {
+          users.add(cleanTarget);
+        }
+      }
     });
 
-    return Array.from(users).filter(u => u !== state.currentUser);
+    return Array.from(users);
   }, [state.messages, state.currentUser]);
 
-  const chatHistory = getChatHistoryUsers();
+  const chatHistory = getChatHistoryUsers();  
 
   const handleSelectChat = (type: 'PUBLIC' | 'PRIVATE' | 'DIVISI' | 'CABANG', target: string) => {
     setActiveChat({ type, target });
@@ -49,11 +87,17 @@ export default function Page() {
   };
 
   const filteredMessages = state.messages.filter((m) => {
-    if (activeChat.type === 'PUBLIC' && m.type === 'PUBLIC') return true;
-    if (activeChat.type === 'DIVISI' && m.type === 'DIVISI' && m.to === activeChat.target) return true;
-    if (activeChat.type === 'CABANG' && m.type === 'CABANG' && m.to === activeChat.target) return true;
+    if (activeChat.type === 'PUBLIC') {
+      return m.type === 'PUBLIC' || m.type === 'GLOBAL' || m.to === 'GLOBAL_ROOM';
+    }
+    if (activeChat.type === 'DIVISI') {
+      return (m.type === 'DIVISI' || m.type === 'GROUP') && m.to?.includes(activeChat.target);
+    }
+    if (activeChat.type === 'CABANG') {
+      return (m.type === 'CABANG' || m.type === 'GROUP') && m.to?.includes(activeChat.target);
+    }
     if (activeChat.type === 'PRIVATE' && m.type === 'PRIVATE') {
-      return m.user === activeChat.target || m.to?.includes(activeChat.target);
+      return m.user === activeChat.target || m.to === activeChat.target || m.to?.includes(activeChat.target);
     }
     return false;
   });
@@ -75,6 +119,16 @@ export default function Page() {
       sessionStorage.removeItem('pendingChatTarget');
     }
   }, [state.registeredUsers, state.currentUser, handleSelectChat]);
+
+  const handleScroll = () => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+    if (container.scrollTop === 0) {
+      console.log("👆 Mentok atas! Menambah limit +20...");
+      setLimit((prevLimit) => prevLimit + 20);
+    }
+  };
+
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
@@ -235,7 +289,9 @@ export default function Page() {
                 <span className="text-foreground">{activeChat.target}</span>
               </div>
 
-              <div className="flex-1 overflow-hidden">
+              <div ref={chatContainerRef}
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto bg-zinc-50">
                 <ChatArea
                   messages={filteredMessages}
                   currentUser={state.currentUser}
@@ -249,7 +305,7 @@ export default function Page() {
                       } else if (activeChat.type === 'CABANG') {
                         destination = `CABANG_${activeChat.target}`;
                       } else if (activeChat.type === 'PUBLIC') {
-                        destination = 'GLOBAL_ROOM';
+                        destination = 'PUBLIC';
                       }
                     sendMessage(msg, activeChat.type, destination);
                   }}
